@@ -32,7 +32,18 @@ public sealed partial class Kcp
 
         // 加入确认列表,重复段也要回,因为上一次确认可能丢了
         pendingAckList.Add((sequence, header.Timestamp));
-        if (offset < 0 || receiveBufferDict.ContainsKey(sequence))
+        if (offset < 0)
+            return;
+        // 腾出接收位置的入口都会先推进缓存 因此有空位时字典不会持有 receiveNext
+        if (offset == 0 && receiveQueueList.Count < receiveWindow)
+        {
+            receiveQueueList.Enqueue(new KcpSegment(header, payload.ToArray()));
+            receiveNext = unchecked(receiveNext + 1);
+            if (receiveBufferDict.Count > 0)
+                MoveContiguousSegments();
+            return;
+        }
+        if (receiveBufferDict.ContainsKey(sequence))
             return;
         receiveBufferDict.Add(sequence,
             new KcpSegment(header, payload.ToArray()));
@@ -43,7 +54,7 @@ public sealed partial class Kcp
     {
         // 将期望的段移出字典,加入队列
         // 比如012发出,102收到,1先存着
-        // 下一次InputPush , 0来了以后立马出字典入队,receiveNext +1 = 1
+        // 下一次 InputPush 中 0 到达且队列有空位时直接入队 receiveNext +1 = 1
         // 1出字典入队,receiveNext +1 = 2
         // 2到达后再出字典入队 receiveNext +1 = 3
         // 队列满时连续段也先留在字典 业务读取腾出位置后再推进 receiveNext
